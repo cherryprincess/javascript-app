@@ -2,29 +2,7 @@ name: Build and Deploy React Dashboard to AKS
 
 on:
   push:
-    branches: [ main, deve    - name: Install Dependencies
-      run: |
-        echo "Installing Node.js dependencies..."
-        # Try npm ci first, fallback to npm install if it fails
-        npm ci || {
-          echo "npm ci failed, trying npm install..."
-          rm -rf node_modules package-lock.json
-          npm install
-        }
-        
-        echo "Verifying critical dependencies..."
-        npm list react-scripts || {
-          echo "react-scripts not found, installing explicitly..."
-          npm install react-scripts@5.0.0
-        }
-        
-        echo "Audit and fix vulnerabilities..."
-        npm audit fix --force || true
-        
-        echo "Final verification..."
-        which react-scripts || npm list react-scripts
-        
-        echo "Dependencies installed successfully"er ]
+    branches: [ main, develop, master ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -108,15 +86,28 @@ jobs:
         node-version: '18.20.4'
         cache: 'npm'
         cache-dependency-path: 'package-lock.json'
-        cache-dependency-path: 'package.json'
 
     - name: Install Dependencies
       run: |
         echo "Installing Node.js dependencies..."
-        npm install --production --ignore-scripts
+        # Try npm ci first, fallback to npm install if it fails
+        npm ci || {
+          echo "npm ci failed, trying npm install..."
+          rm -rf node_modules package-lock.json
+          npm install
+        }
+        
+        echo "Verifying critical dependencies..."
+        npm list react-scripts || {
+          echo "react-scripts not found, installing explicitly..."
+          npm install react-scripts@5.0.0
+        }
         
         echo "Audit and fix vulnerabilities..."
         npm audit fix --force || true
+        
+        echo "Final verification..."
+        which react-scripts || npm list react-scripts
         
         echo "Dependencies installed successfully"
 
