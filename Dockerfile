@@ -20,7 +20,16 @@ COPY package*.json ./
 RUN rm -f package-lock.json && \
     npm install && \
     npm audit fix --force && \
-    npm cache clean --force
+    npm cache clean --force && \
+    echo "Verifying react-scripts installation..." && \
+    if [ -f "node_modules/.bin/react-scripts" ]; then \
+        echo "✅ react-scripts binary found" && \
+        ls -la node_modules/.bin/react-scripts; \
+    else \
+        echo "❌ react-scripts binary missing, installing explicitly..." && \
+        npm install react-scripts@5.0.0 && \
+        ls -la node_modules/.bin/ | grep react || echo "No react binaries found"; \
+    fi
 
 # Copy source code
 COPY . .
@@ -30,7 +39,19 @@ RUN chown -R reactuser:nodejs /usr/src/app
 USER reactuser
 
 # Build the application
-RUN npm run build
+RUN if [ -f "node_modules/.bin/react-scripts" ] && [ -x "node_modules/.bin/react-scripts" ]; then \
+        echo "Using direct react-scripts path..." && \
+        ./node_modules/.bin/react-scripts build; \
+    else \
+        echo "react-scripts binary missing, installing..." && \
+        npm install react-scripts@5.0.0 && \
+        if [ -f "node_modules/.bin/react-scripts" ]; then \
+            ./node_modules/.bin/react-scripts build; \
+        else \
+            echo "Fallback to npm run build..." && \
+            npm run build; \
+        fi; \
+    fi
 
 # Stage 2: Production stage
 FROM nginx:1.25.3-alpine AS production
