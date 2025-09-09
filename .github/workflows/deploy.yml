@@ -404,9 +404,13 @@ jobs:
         # Update deployment with correct image
         sed -i "s|app_image|${IMAGE_NAME}|g" k8s/deployment.yaml
         
-        # Add build labels
-        sed -i "/labels:/a\\    build-id: \"${BUILD_ID}\"" k8s/deployment.yaml
-        sed -i "/labels:/a\\    git-sha: \"${{ github.sha }}\"" k8s/deployment.yaml
+        # Validate YAML syntax after modification
+        echo "Validating YAML syntax..."
+        kubectl --dry-run=client apply -f k8s/deployment.yaml || {
+          echo "YAML validation failed, showing content around potential issue:"
+          cat -n k8s/deployment.yaml | sed -n '20,35p'
+          exit 1
+        }
         
         echo "Updated deployment manifest:"
         cat k8s/deployment.yaml
