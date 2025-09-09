@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: github-copilot-ns
+  labels:
+    name: github-copilot-ns
+    environment: production
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: react-app-config
+  namespace: github-copilot-ns
+  labels:
+    app: react-dashboard
+    environment: production
+data:
+  NODE_ENV: "production"
+  REACT_APP_ENV: "production"
+  PORT: "8080"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-dashboard-deployment
+  namespace: github-copilot-ns
+  labels:
+    app: react-dashboard
+    environment: production
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: react-dashboard
+  template:
+    metadata:
+      labels:
+        app: react-dashboard
+        environment: production
+        version: v1
+    spec:
+      # Security Context for Pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      
+      # Service Account
+      serviceAccountName: react-dashboard-sa
+      automountServiceAccountToken: false
+      
+      containers:
+      - name: react-dashboard
+        image: app_image
+        imagePullPolicy: Always
+        
+        # Security Context for Container
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+          name: http
+        
+        # Environment Variables from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: react-app-config
+        
+        # Resource Limits and Requests
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        # Health Checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Startup Probe
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 30
+        
+        # Volume Mounts for writable directories
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+        - name: var-cache-nginx
+          mountPath: /var/cache/nginx
+        - name: var-log-nginx
+          mountPath: /var/log/nginx
+        - name: var-run
+          mountPath: /var/run
+      
+      # Volumes for writable directories
+      volumes:
+      - name: tmp-volume
+        emptyDir: {}
+      - name: var-cache-nginx
+        emptyDir: {}
+      - name: var-log-nginx
+        emptyDir: {}
+      - name: var-run
+        emptyDir: {}
+      
+      # Pod Anti-Affinity for better distribution
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - react-dashboard
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: react-dashboard-sa
+  namespace: github-copilot-ns
+  labels:
+    app: react-dashboard
+    environment: production
+automountServiceAccountToken: false
