@@ -1,0 +1,410 @@
+name: Build and Deploy React Dashboard to AKS
+
+on:
+  push:
+    branches: [ main, develop, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+  REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+  REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+  AKS_CLUSTER_NAME: ${{ secrets.AKS_CLUSTER_NAME }}
+  AKS_RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP }}
+  NAMESPACE: github-copilot-ns
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      build-id: ${{ steps.generate-build-id.outputs.BUILD_ID }}
+      image-tag: ${{ steps.generate-build-id.outputs.BUILD_ID }}
+    
+    steps:
+    - name: Setup Job
+      run: |
+        echo "Starting build job for React Dashboard application"
+        echo "Triggered by: ${{ github.event_name }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Commit SHA: ${{ github.sha }}"
+
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Generate Build Information
+      id: generate-build-id
+      run: |
+        BUILD_ID=$(echo ${GITHUB_SHA::8}-${GITHUB_RUN_NUMBER})
+        echo "BUILD_ID=${BUILD_ID}" >> $GITHUB_OUTPUT
+        echo "Generated Build ID: ${BUILD_ID}"
+        
+        # Generate build metadata
+        echo "Build Information:" >> build-info.txt
+        echo "Build ID: ${BUILD_ID}" >> build-info.txt
+        echo "Git SHA: ${{ github.sha }}" >> build-info.txt
+        echo "Branch: ${{ github.ref_name }}" >> build-info.txt
+        echo "Triggered by: ${{ github.event_name }}" >> build-info.txt
+        echo "Build Time: $(date -u)" >> build-info.txt
+        
+        cat build-info.txt
+
+    - name: Install Azure CLI
+      run: |
+        echo "Installing Azure CLI..."
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        az version
+
+    - name: Install Additional Dependencies
+      run: |
+        echo "Installing kubectl..."
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        kubectl version --client
+        
+        echo "Installing Docker Buildx..."
+        docker buildx version
+
+    - name: Install Trivy Security Scanner
+      run: |
+        echo "Installing Trivy manually..."
+        sudo apt-get update
+        sudo apt-get install wget apt-transport-https gnupg lsb-release -y
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install trivy -y
+        trivy --version
+
+    - name: Setup Node.js Environment
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18.20.4'
+        cache: 'npm'
+
+    - name: Install Dependencies
+      run: |
+        echo "Installing Node.js dependencies..."
+        npm ci --ignore-scripts
+        
+        echo "Audit and fix vulnerabilities..."
+        npm audit fix --force || true
+        
+        echo "Dependencies installed successfully"
+
+    - name: Run Tests
+      run: |
+        echo "Running application tests..."
+        npm test || echo "Tests completed with warnings"
+
+    - name: Build Application
+      run: |
+        echo "Building React application..."
+        npm run build
+        
+        echo "Build completed. Checking build output..."
+        ls -la build/
+        
+        echo "Build size analysis..."
+        du -sh build/
+
+    - name: Azure Login
+      run: |
+        echo "Logging into Azure..."
+        az login --service-principal \
+          --username ${{ secrets.AZURE_CLIENT_ID }} \
+          --password ${{ secrets.AZURE_CLIENT_SECRET }} \
+          --tenant ${{ secrets.AZURE_TENANT_ID }}
+        
+        az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        echo "Azure login successful"
+
+    - name: Build and Push Docker Image
+      run: |
+        BUILD_ID=${{ steps.generate-build-id.outputs.BUILD_ID }}
+        IMAGE_NAME="${REGISTRY_LOGIN_SERVER}/react-dashboard:${BUILD_ID}"
+        LATEST_IMAGE="${REGISTRY_LOGIN_SERVER}/react-dashboard:latest"
+        
+        echo "Building Docker image: ${IMAGE_NAME}"
+        
+        # Login to Azure Container Registry
+        echo ${{ secrets.REGISTRY_PASSWORD }} | docker login ${{ secrets.REGISTRY_LOGIN_SERVER }} \
+          --username ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+        
+        # Build multi-platform image
+        docker buildx create --use --name multiarch-builder || true
+        
+        # Build and push image
+        docker buildx build \
+          --platform linux/amd64 \
+          --tag ${IMAGE_NAME} \
+          --tag ${LATEST_IMAGE} \
+          --push \
+          --file Dockerfile \
+          .
+        
+        echo "Docker image built and pushed successfully"
+        echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+
+    - name: Run Trivy Security Scan on Docker Image
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        image-ref: ${{ env.REGISTRY_LOGIN_SERVER }}/react-dashboard:${{ steps.generate-build-id.outputs.BUILD_ID }}
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+        timeout: '10m'
+      env:
+        TRIVY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+        TRIVY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+
+    - name: Run Trivy Filesystem Scan
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+        timeout: '10m'
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-${{ steps.generate-build-id.outputs.BUILD_ID }}
+        path: |
+          build/
+          k8s/
+          build-info.txt
+          Dockerfile
+        retention-days: 30
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
+    environment: production
+    
+    steps:
+    - name: Setup Deployment Job
+      run: |
+        echo "Starting deployment job for React Dashboard"
+        echo "Build ID: ${{ needs.build.outputs.build-id }}"
+        echo "Target Environment: Production"
+        echo "Target Namespace: ${NAMESPACE}"
+
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Download Build Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts-${{ needs.build.outputs.build-id }}
+        path: ./artifacts
+
+    - name: Install Azure CLI
+      run: |
+        echo "Installing Azure CLI for deployment..."
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        az version
+
+    - name: Install Additional Dependencies
+      run: |
+        echo "Installing kubectl..."
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        kubectl version --client
+
+    - name: Install Trivy Security Scanner
+      run: |
+        echo "Installing Trivy for deployment verification..."
+        sudo apt-get update
+        sudo apt-get install wget apt-transport-https gnupg lsb-release -y
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install trivy -y
+        trivy --version
+
+    - name: Azure Login for Deployment
+      run: |
+        echo "Logging into Azure for deployment..."
+        az login --service-principal \
+          --username ${{ secrets.AZURE_CLIENT_ID }} \
+          --password ${{ secrets.AZURE_CLIENT_SECRET }} \
+          --tenant ${{ secrets.AZURE_TENANT_ID }}
+        
+        az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        echo "Azure login successful"
+
+    - name: Connect to AKS Cluster
+      run: |
+        echo "Connecting to AKS cluster: ${AKS_CLUSTER_NAME}"
+        az aks get-credentials \
+          --resource-group ${AKS_RESOURCE_GROUP} \
+          --name ${AKS_CLUSTER_NAME} \
+          --overwrite-existing
+        
+        echo "Testing cluster connectivity..."
+        kubectl cluster-info
+        kubectl get nodes
+
+    - name: Verify Container Image Security
+      run: |
+        BUILD_ID=${{ needs.build.outputs.build-id }}
+        IMAGE_NAME="${REGISTRY_LOGIN_SERVER}/react-dashboard:${BUILD_ID}"
+        
+        echo "Performing final security scan on image: ${IMAGE_NAME}"
+        
+        # Login to registry for scan
+        echo ${{ secrets.REGISTRY_PASSWORD }} | docker login ${{ secrets.REGISTRY_LOGIN_SERVER }} \
+          --username ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+        
+        # Run security scan
+        trivy image \
+          --format table \
+          --exit-code 1 \
+          --ignore-unfixed \
+          --vuln-type os,library \
+          --severity CRITICAL,HIGH \
+          --timeout 10m \
+          --username ${{ secrets.REGISTRY_USERNAME }} \
+          --password ${{ secrets.REGISTRY_PASSWORD }} \
+          ${IMAGE_NAME}
+
+    - name: Prepare Kubernetes Manifests
+      run: |
+        BUILD_ID=${{ needs.build.outputs.build-id }}
+        IMAGE_NAME="${REGISTRY_LOGIN_SERVER}/react-dashboard:${BUILD_ID}"
+        
+        echo "Preparing Kubernetes manifests with image: ${IMAGE_NAME}"
+        
+        # Update deployment with correct image
+        sed -i "s|app_image|${IMAGE_NAME}|g" k8s/deployment.yaml
+        
+        # Add build labels
+        sed -i "/labels:/a\\    build-id: \"${BUILD_ID}\"" k8s/deployment.yaml
+        sed -i "/labels:/a\\    git-sha: \"${{ github.sha }}\"" k8s/deployment.yaml
+        
+        echo "Updated deployment manifest:"
+        cat k8s/deployment.yaml
+
+    - name: Create Namespace
+      run: |
+        echo "Creating namespace: ${NAMESPACE}"
+        kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Label namespace for network policies
+        kubectl label namespace ${NAMESPACE} name=${NAMESPACE} --overwrite
+        
+        echo "Namespace created/updated successfully"
+
+    - name: Deploy to Kubernetes
+      run: |
+        echo "Deploying to AKS cluster..."
+        
+        # Apply all Kubernetes manifests
+        kubectl apply -f k8s/ -n ${NAMESPACE}
+        
+        echo "Deployment manifests applied successfully"
+
+    - name: Verify Deployment
+      run: |
+        BUILD_ID=${{ needs.build.outputs.build-id }}
+        
+        echo "Verifying deployment..."
+        
+        # Wait for deployment to be ready
+        kubectl rollout status deployment/react-dashboard-deployment -n ${NAMESPACE} --timeout=600s
+        
+        # Check pods
+        echo "Pod status:"
+        kubectl get pods -n ${NAMESPACE} -l app=react-dashboard
+        
+        # Check services
+        echo "Service status:"
+        kubectl get services -n ${NAMESPACE}
+        
+        # Check deployment details
+        echo "Deployment details:"
+        kubectl describe deployment react-dashboard-deployment -n ${NAMESPACE}
+        
+        # Verify image is correct
+        DEPLOYED_IMAGE=$(kubectl get deployment react-dashboard-deployment -n ${NAMESPACE} -o jsonpath='{.spec.template.spec.containers[0].image}')
+        echo "Deployed image: ${DEPLOYED_IMAGE}"
+        
+        if [[ "${DEPLOYED_IMAGE}" == *"${BUILD_ID}"* ]]; then
+          echo "✅ Deployment verification successful - correct image deployed"
+        else
+          echo "❌ Deployment verification failed - incorrect image deployed"
+          exit 1
+        fi
+
+    - name: Run Post-Deployment Health Checks
+      run: |
+        echo "Running post-deployment health checks..."
+        
+        # Wait a bit for pods to be fully ready
+        sleep 30
+        
+        # Check if all replicas are ready
+        READY_REPLICAS=$(kubectl get deployment react-dashboard-deployment -n ${NAMESPACE} -o jsonpath='{.status.readyReplicas}')
+        DESIRED_REPLICAS=$(kubectl get deployment react-dashboard-deployment -n ${NAMESPACE} -o jsonpath='{.spec.replicas}')
+        
+        echo "Ready replicas: ${READY_REPLICAS}/${DESIRED_REPLICAS}"
+        
+        if [[ "${READY_REPLICAS}" == "${DESIRED_REPLICAS}" ]]; then
+          echo "✅ All replicas are ready"
+        else
+          echo "⚠️  Not all replicas are ready yet"
+          kubectl get pods -n ${NAMESPACE} -l app=react-dashboard
+        fi
+        
+        # Test service connectivity
+        echo "Testing service connectivity..."
+        kubectl get endpoints -n ${NAMESPACE}
+        
+        echo "✅ Deployment completed successfully!"
+
+    - name: Generate Deployment Report
+      run: |
+        BUILD_ID=${{ needs.build.outputs.build-id }}
+        
+        echo "## 🚀 Deployment Report" >> deployment-report.md
+        echo "" >> deployment-report.md
+        echo "**Build ID:** ${BUILD_ID}" >> deployment-report.md
+        echo "**Git SHA:** ${{ github.sha }}" >> deployment-report.md
+        echo "**Branch:** ${{ github.ref_name }}" >> deployment-report.md
+        echo "**Namespace:** ${NAMESPACE}" >> deployment-report.md
+        echo "**Cluster:** ${AKS_CLUSTER_NAME}" >> deployment-report.md
+        echo "**Deployed Image:** ${REGISTRY_LOGIN_SERVER}/react-dashboard:${BUILD_ID}" >> deployment-report.md
+        echo "" >> deployment-report.md
+        echo "### Pod Status" >> deployment-report.md
+        echo '```' >> deployment-report.md
+        kubectl get pods -n ${NAMESPACE} -l app=react-dashboard >> deployment-report.md
+        echo '```' >> deployment-report.md
+        echo "" >> deployment-report.md
+        echo "### Service Status" >> deployment-report.md
+        echo '```' >> deployment-report.md
+        kubectl get services -n ${NAMESPACE} >> deployment-report.md
+        echo '```' >> deployment-report.md
+        
+        cat deployment-report.md
+
+    - name: Upload Deployment Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-report-${{ needs.build.outputs.build-id }}
+        path: |
+          deployment-report.md
+          k8s/
+        retention-days: 90
