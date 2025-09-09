@@ -2,7 +2,29 @@ name: Build and Deploy React Dashboard to AKS
 
 on:
   push:
-    branches: [ main, develop, master ]
+    branches: [ main, deve    - name: Install Dependencies
+      run: |
+        echo "Installing Node.js dependencies..."
+        # Try npm ci first, fallback to npm install if it fails
+        npm ci || {
+          echo "npm ci failed, trying npm install..."
+          rm -rf node_modules package-lock.json
+          npm install
+        }
+        
+        echo "Verifying critical dependencies..."
+        npm list react-scripts || {
+          echo "react-scripts not found, installing explicitly..."
+          npm install react-scripts@5.0.0
+        }
+        
+        echo "Audit and fix vulnerabilities..."
+        npm audit fix --force || true
+        
+        echo "Final verification..."
+        which react-scripts || npm list react-scripts
+        
+        echo "Dependencies installed successfully"er ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -85,6 +107,7 @@ jobs:
       with:
         node-version: '18.20.4'
         cache: 'npm'
+        cache-dependency-path: 'package-lock.json'
         cache-dependency-path: 'package.json'
 
     - name: Install Dependencies
@@ -105,13 +128,25 @@ jobs:
     - name: Build Application
       run: |
         echo "Building React application..."
-        npm run build
+        
+        # Verify react-scripts is available
+        if ! command -v react-scripts &> /dev/null; then
+          echo "react-scripts not in PATH, using npx..."
+          npx react-scripts build
+        else
+          npm run build
+        fi
         
         echo "Build completed. Checking build output..."
-        ls -la build/
-        
-        echo "Build size analysis..."
-        du -sh build/
+        if [ -d "build" ]; then
+          ls -la build/
+          echo "Build size analysis..."
+          du -sh build/
+          echo "Build files count: $(find build -type f | wc -l)"
+        else
+          echo "Error: Build directory not found!"
+          exit 1
+        fi
 
     - name: Azure Login
       run: |
