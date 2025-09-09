@@ -90,24 +90,36 @@ jobs:
     - name: Install Dependencies
       run: |
         echo "Installing Node.js dependencies..."
-        # Try npm ci first, fallback to npm install if it fails
-        npm ci || {
-          echo "npm ci failed, trying npm install..."
-          rm -rf node_modules package-lock.json
-          npm install
-        }
+        echo "Node version: $(node --version)"
+        echo "NPM version: $(npm --version)"
+        
+        # Clean install approach
+        echo "Cleaning previous installations..."
+        rm -rf node_modules package-lock.json || true
+        
+        echo "Installing dependencies with npm install..."
+        npm install
         
         echo "Verifying critical dependencies..."
-        npm list react-scripts || {
-          echo "react-scripts not found, installing explicitly..."
+        if npm list react-scripts > /dev/null 2>&1; then
+          echo "✅ react-scripts found in dependencies"
+        else
+          echo "❌ react-scripts not found, installing explicitly..."
           npm install react-scripts@5.0.0
-        }
+        fi
+        
+        # Verify react-scripts installation
+        if [ -f "node_modules/.bin/react-scripts" ]; then
+          echo "✅ react-scripts binary found at node_modules/.bin/react-scripts"
+          ./node_modules/.bin/react-scripts --version
+        else
+          echo "❌ react-scripts binary not found"
+          echo "Listing node_modules/.bin contents:"
+          ls -la node_modules/.bin/ | head -20
+        fi
         
         echo "Audit and fix vulnerabilities..."
         npm audit fix --force || true
-        
-        echo "Final verification..."
-        which react-scripts || npm list react-scripts
         
         echo "Dependencies installed successfully"
 
@@ -120,11 +132,21 @@ jobs:
       run: |
         echo "Building React application..."
         
-        # Verify react-scripts is available
-        if ! command -v react-scripts &> /dev/null; then
-          echo "react-scripts not in PATH, using npx..."
-          npx react-scripts build
+        # Debug: Check current directory and dependencies
+        echo "Current directory: $(pwd)"
+        echo "Node version: $(node --version)"
+        echo "NPM version: $(npm --version)"
+        
+        # Check if react-scripts exists in node_modules
+        if [ -f "node_modules/.bin/react-scripts" ]; then
+          echo "Found react-scripts in node_modules/.bin, using direct path..."
+          ./node_modules/.bin/react-scripts build
+        elif npm list react-scripts > /dev/null 2>&1; then
+          echo "react-scripts found in dependencies, using npm run build..."
+          npm run build
         else
+          echo "react-scripts not found, installing and building..."
+          npm install react-scripts@5.0.0
           npm run build
         fi
         
@@ -134,6 +156,14 @@ jobs:
           echo "Build size analysis..."
           du -sh build/
           echo "Build files count: $(find build -type f | wc -l)"
+          
+          # Verify critical build files exist
+          if [ -f "build/index.html" ]; then
+            echo "✅ Build successful - index.html found"
+          else
+            echo "❌ Build issue - index.html not found"
+            exit 1
+          fi
         else
           echo "Error: Build directory not found!"
           exit 1
