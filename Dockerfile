@@ -16,7 +16,9 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY package*.json ./
 
 # Install dependencies with security fixes
-RUN npm ci --only=production --ignore-scripts && \
+# Remove existing lock file to avoid version conflicts and install all dependencies
+RUN rm -f package-lock.json && \
+    npm install && \
     npm audit fix --force && \
     npm cache clean --force
 
