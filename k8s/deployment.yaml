@@ -95,8 +95,19 @@ spec:
             memory: "512Mi"
             cpu: "500m"
         
-        # Health Checks
+        # Health Checks - More lenient for initial deployment
         livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 5
+        
+        readinessProbe:
           httpGet:
             path: /health
             port: 8080
@@ -105,30 +116,19 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           successThreshold: 1
-          failureThreshold: 3
+          failureThreshold: 5
         
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-            scheme: HTTP
-          initialDelaySeconds: 5
-          periodSeconds: 5
-          timeoutSeconds: 3
-          successThreshold: 1
-          failureThreshold: 3
-        
-        # Startup Probe
+        # Startup Probe - Give more time for container startup
         startupProbe:
           httpGet:
             path: /health
             port: 8080
             scheme: HTTP
-          initialDelaySeconds: 10
-          periodSeconds: 10
-          timeoutSeconds: 5
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 10
           successThreshold: 1
-          failureThreshold: 30
+          failureThreshold: 20
         
         # Volume Mounts for writable directories
         volumeMounts:
