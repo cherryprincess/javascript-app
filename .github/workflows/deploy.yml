@@ -101,21 +101,51 @@ jobs:
         npm install
         
         echo "Verifying critical dependencies..."
+        echo "Checking react-scripts installation status..."
+        
+        # Check if react-scripts is in package.json
         if npm list react-scripts > /dev/null 2>&1; then
-          echo "✅ react-scripts found in dependencies"
+          echo "✅ react-scripts found in package.json dependencies"
         else
-          echo "❌ react-scripts not found, installing explicitly..."
-          npm install react-scripts@5.0.0
+          echo "❌ react-scripts not in package.json, adding it..."
+          npm install react-scripts@5.0.0 --save
         fi
         
-        # Verify react-scripts installation
-        if [ -f "node_modules/.bin/react-scripts" ]; then
-          echo "✅ react-scripts binary found at node_modules/.bin/react-scripts"
-          ./node_modules/.bin/react-scripts --version
+        # Verify react-scripts binary installation
+        if [ -f "node_modules/.bin/react-scripts" ] && [ -x "node_modules/.bin/react-scripts" ]; then
+          echo "✅ react-scripts binary found and executable"
+          ./node_modules/.bin/react-scripts --version || echo "Version check failed but binary exists"
         else
-          echo "❌ react-scripts binary not found"
-          echo "Listing node_modules/.bin contents:"
-          ls -la node_modules/.bin/ | head -20
+          echo "❌ react-scripts binary missing or not executable"
+          echo "Forcing reinstall of react-scripts..."
+          npm install react-scripts@5.0.0 --force
+          
+          # Final verification
+          if [ -f "node_modules/.bin/react-scripts" ]; then
+            echo "✅ react-scripts binary now available after force install"
+            chmod +x node_modules/.bin/react-scripts
+          else
+            echo "❌ react-scripts binary still missing after force install"
+            echo "Listing node_modules/.bin contents:"
+            ls -la node_modules/.bin/ | head -20
+            echo "Listing react-scripts package contents:"
+            ls -la node_modules/react-scripts/ 2>/dev/null | head -10 || echo "react-scripts directory not found"
+          fi
+        fi
+        
+        echo "Rebuilding binaries to ensure proper linking..."
+        npm rebuild || echo "npm rebuild completed with warnings"
+        
+        echo "Final verification of react-scripts..."
+        if which react-scripts > /dev/null 2>&1; then
+          echo "✅ react-scripts available in PATH"
+        elif [ -f "node_modules/.bin/react-scripts" ]; then
+          echo "✅ react-scripts available via node_modules/.bin/"
+        else
+          echo "❌ react-scripts still not available"
+          echo "PATH contents: $PATH"
+          echo "node_modules/.bin contents:"
+          ls -la node_modules/.bin/ 2>/dev/null || echo "node_modules/.bin not accessible"
         fi
         
         echo "Audit and fix vulnerabilities..."
@@ -137,17 +167,43 @@ jobs:
         echo "Node version: $(node --version)"
         echo "NPM version: $(npm --version)"
         
-        # Check if react-scripts exists in node_modules
-        if [ -f "node_modules/.bin/react-scripts" ]; then
-          echo "Found react-scripts in node_modules/.bin, using direct path..."
-          ./node_modules/.bin/react-scripts build
-        elif npm list react-scripts > /dev/null 2>&1; then
-          echo "react-scripts found in dependencies, using npm run build..."
-          npm run build
+        # Debug: Check node_modules structure
+        echo "Checking node_modules structure..."
+        if [ -d "node_modules" ]; then
+          echo "node_modules directory exists"
+          echo "Contents of node_modules/.bin:"
+          ls -la node_modules/.bin/ | grep react || echo "No react-related binaries found"
         else
-          echo "react-scripts not found, installing and building..."
-          npm install react-scripts@5.0.0
-          npm run build
+          echo "node_modules directory does not exist!"
+        fi
+        
+        # More thorough check for react-scripts
+        echo "Checking react-scripts installation..."
+        if [ -f "node_modules/.bin/react-scripts" ] && [ -x "node_modules/.bin/react-scripts" ]; then
+          echo "✅ Found executable react-scripts binary, using direct path..."
+          ./node_modules/.bin/react-scripts build
+        elif [ -d "node_modules/react-scripts" ]; then
+          echo "react-scripts directory found but binary missing, reinstalling..."
+          npm install react-scripts@5.0.0 --force
+          if [ -f "node_modules/.bin/react-scripts" ]; then
+            echo "✅ react-scripts binary now available, building..."
+            ./node_modules/.bin/react-scripts build
+          else
+            echo "❌ Still no react-scripts binary after reinstall, trying npm run build..."
+            npm run build
+          fi
+        else
+          echo "❌ react-scripts not properly installed, doing fresh install..."
+          npm install react-scripts@5.0.0 --force
+          echo "Verifying installation..."
+          if [ -f "node_modules/.bin/react-scripts" ]; then
+            echo "✅ Fresh install successful, building..."
+            ./node_modules/.bin/react-scripts build
+          else
+            echo "❌ Fresh install failed, listing node_modules/.bin contents:"
+            ls -la node_modules/.bin/ || echo "node_modules/.bin not found"
+            exit 1
+          fi
         fi
         
         echo "Build completed. Checking build output..."
