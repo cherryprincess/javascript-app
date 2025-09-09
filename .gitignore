@@ -30,5 +30,4 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Package-lock (optional)
-package-lock.json
+# Note: package-lock.json is included for consistent CI/CD builds
