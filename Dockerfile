@@ -38,9 +38,8 @@ RUN apk update && apk upgrade && \
     apk add --no-cache dumb-init && \
     rm -rf /var/cache/apk/*
 
-# Create non-root user
-RUN addgroup -g 1001 -S nginx && \
-    adduser -S appuser -u 1001 -G nginx
+# Create non-root user (use existing nginx group)
+RUN adduser -S appuser -u 1001 -G nginx
 
 # Remove default nginx config
 RUN rm /etc/nginx/conf.d/default.conf
