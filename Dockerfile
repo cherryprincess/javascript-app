@@ -47,30 +47,30 @@ RUN apk upgrade --no-cache && \
     apk add --no-cache dumb-init curl && \
     rm -rf /var/cache/apk/*
 
-# Create consistent non-root user with specific UID/GID
-RUN addgroup -g 101 -S appgroup && \
-    adduser -S -D -H -u 101 -h /var/cache/nginx -s /sbin/nologin -G appgroup appuser
+# Create consistent non-root user with specific UID/GID (using 1001 to avoid conflicts)
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -S -D -H -u 1001 -h /var/cache/nginx -s /sbin/nologin -G appgroup appuser
 
 # Copy built application from build stage
-COPY --from=builder --chown=101:101 /app/build /usr/share/nginx/html
+COPY --from=builder --chown=1001:1001 /app/build /usr/share/nginx/html
 
 # Copy optimized nginx configuration
-COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
+COPY --chown=1001:1001 nginx.conf /etc/nginx/conf.d/default.conf
 
 # Set up secure directory permissions
 RUN mkdir -p /var/run/nginx /var/cache/nginx /var/log/nginx && \
-    chown -R 101:101 /usr/share/nginx/html \
-                     /var/cache/nginx \
-                     /var/run/nginx \
-                     /var/log/nginx \
-                     /etc/nginx/conf.d && \
+    chown -R 1001:1001 /usr/share/nginx/html \
+                       /var/cache/nginx \
+                       /var/run/nginx \
+                       /var/log/nginx \
+                       /etc/nginx/conf.d && \
     chmod -R 755 /usr/share/nginx/html && \
     chmod 644 /etc/nginx/conf.d/default.conf && \
     touch /var/run/nginx.pid && \
-    chown 101:101 /var/run/nginx.pid
+    chown 1001:1001 /var/run/nginx.pid
 
 # Switch to non-root user
-USER 101:101
+USER 1001:1001
 
 # Expose application port
 EXPOSE 8080
