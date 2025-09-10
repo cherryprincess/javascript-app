@@ -13,9 +13,9 @@ WORKDIR /app
 # Copy package files for optimized Docker layer caching
 COPY package*.json ./
 
-# Enhanced dependency installation with multiple fallback strategies
-RUN echo "🔧 Installing dependencies with fallback strategies..." && \
-    npm ci --only=production --no-audit || \
+# Enhanced dependency installation with dev dependencies for build
+RUN echo "🔧 Installing ALL dependencies (including dev) for build stage..." && \
+    npm ci --no-audit || \
     (echo "⚠️  npm ci failed, trying npm install with legacy peer deps..." && \
      rm -f package-lock.json && \
      npm cache clean --force && \
@@ -33,7 +33,7 @@ COPY . .
 
 # Build the React application with robust error handling
 RUN echo "🚀 Building React application..." && \
-    npm run build && \
+    GENERATE_SOURCEMAP=false ESLINT_NO_DEV_ERRORS=true npm run build && \
     echo "✅ Build completed successfully" && \
     ls -la build/ && \
     echo "📊 Build size: $(du -sh build/)" && \
