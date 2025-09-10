@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: material-dashboard-pdb
+  namespace: github-copilot-ns
+  labels:
+    app: material-dashboard
+    app.kubernetes.io/name: material-dashboard
+    app.kubernetes.io/component: pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: material-dashboard
