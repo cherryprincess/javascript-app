@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: github-copilot-ns
+  labels:
+    name: github-copilot-ns
+    environment: production
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: react-app-config
+  namespace: github-copilot-ns
+  labels:
+    app: react-dashboard
+    environment: production
+data:
+  NODE_ENV: "production"
+  REACT_APP_ENV: "production"
+  PORT: "8080"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-dashboard-deployment
+  namespace: github-copilot-ns
+  labels:
+    app: react-dashboard
+    environment: production
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: react-dashboard
+  template:
+    metadata:
+      labels:
+        app: react-dashboard
+        environment: production
+        version: v1
+    spec:
+      # Enhanced Security Context for Pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: "OnRootMismatch"
+        seccompProfile:
+          type: RuntimeDefault
+        supplementalGroups: []
+      
+      # Service Account
+      serviceAccountName: react-dashboard-sa
+      automountServiceAccountToken: false
+      
+      containers:
+      - name: react-dashboard
+        image: app_image
+        imagePullPolicy: Always
+        
+        # Enhanced Security Context for Container
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 101
+          runAsGroup: 101
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+          privileged: false
+        
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+          name: http
+        
+        # Environment Variables from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: react-app-config
+        
+        # Optimized Resource Configuration for React SPA
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+            ephemeral-storage: "1Gi"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+            ephemeral-storage: "2Gi"
+        
+        # Progressive Health Checks - Optimized for React SPA with nginx
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 18
+          
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 45
+          periodSeconds: 20
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Volume Mounts for writable directories
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+        - name: var-cache-nginx
+          mountPath: /var/cache/nginx
+        - name: var-log-nginx
+          mountPath: /var/log/nginx
+        - name: var-run
+          mountPath: /var/run
+      
+      # Volumes for writable directories
+      volumes:
+      - name: tmp-volume
+        emptyDir: {}
+      - name: var-cache-nginx
+        emptyDir: {}
+      - name: var-log-nginx
+        emptyDir: {}
+      - name: var-run
+        emptyDir: {}
+      
+      # Pod Anti-Affinity for better distribution
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - react-dashboard
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: react-dashboard-sa
+  namespace: github-copilot-ns
+  labels:
+    app: react-dashboard
+    environment: production
+automountServiceAccountToken: false
