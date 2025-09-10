@@ -1,6 +1,6 @@
 # Multi-stage build for React Material Dashboard Application
 # Stage 1: Build the React application
-FROM node:18.20.4-alpine AS builder
+FROM node:24.7.0-alpine AS builder
 
 # Set working directory
 WORKDIR /app
