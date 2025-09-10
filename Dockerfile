@@ -43,7 +43,7 @@ RUN npm run build && \
     rm -rf node_modules
 
 # Stage 2: Production nginx server
-FROM nginx:1.25.3-alpine AS production
+FROM nginx:1.29.1-alpine AS production
 
 # Create non-root user with UID/GID > 1000 to avoid conflicts
 RUN addgroup -g 1001 -S appgroup && \
